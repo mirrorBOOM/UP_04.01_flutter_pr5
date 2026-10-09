@@ -7,7 +7,9 @@ import 'core/api_client.dart';
 import 'repositories/workout_repository.dart';
 import 'repositories/api_workout_repository.dart';
 import 'repositories/persistent_workout_repository.dart';
+import 'state/auth_notifier.dart';
 import 'state/workout_list_notifier.dart';
+import 'widgets/inactivity_watcher.dart';
 import 'router.dart';
 
 Future<void> main() async {
@@ -15,41 +17,48 @@ Future<void> main() async {
   usePathUrlStrategy();
 
   final prefs = await SharedPreferences.getInstance();
+  final authNotifier = AuthNotifier(prefs);
+  await authNotifier.restore(); 
+
   final localRepo = FitnessClubRepository(prefs);
+  final dio = buildDio(authNotifier: authNotifier);
+  final apiRepo = ApiWorkoutRepository(dio);
 
   runApp(
     MultiProvider(
       providers: [
-        Provider<Dio>(create: (_) => buildDio()),
-
-        ProxyProvider<Dio, WorkoutRepository>(
-          update: (_, dio, __) => ApiWorkoutRepository(dio),
-        ),
-
+        ChangeNotifierProvider<AuthNotifier>.value(value: authNotifier),
+        Provider<Dio>.value(value: dio),
+        Provider<WorkoutRepository>.value(value: apiRepo),
         Provider<FitnessClubRepository>.value(value: localRepo),
-
         ChangeNotifierProvider<WorkoutListNotifier>(
-          create: (ctx) => WorkoutListNotifier(ctx.read<WorkoutRepository>())..load(),
+          create: (_) => WorkoutListNotifier(apiRepo)..load(),
         ),
       ],
-      child: const FitnessClubApp(),
+      child: FitnessClubApp(authNotifier: authNotifier),
     ),
   );
 }
 
 class FitnessClubApp extends StatelessWidget {
-  const FitnessClubApp({super.key});
+  final AuthNotifier authNotifier;
+  const FitnessClubApp({super.key, required this.authNotifier});
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp.router(
-      title: 'Фитнес-клуб API',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepOrange),
-        useMaterial3: true,
+    return InactivityWatcher(
+      timeout: const Duration(minutes: 3),
+      warningBefore: const Duration(seconds: 30),
+      onTimeout: () => authNotifier.logout(),
+      child: MaterialApp.router(
+        title: 'Фитнес-клуб Auth',
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(
+          colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepOrange),
+          useMaterial3: true,
+        ),
+        routerConfig: buildAppRouter(authNotifier),
       ),
-      routerConfig: appRouter,
     );
   }
 }

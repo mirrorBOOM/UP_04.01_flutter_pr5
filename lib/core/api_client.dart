@@ -2,8 +2,9 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'config.dart';
 import 'api_exceptions.dart';
+import '../state/auth_notifier.dart';
 
-Dio buildDio({String? Function()? tokenProvider}) {
+Dio buildDio({required AuthNotifier authNotifier}) {
   final dio = Dio(
     BaseOptions(
       baseUrl: apiBaseUrl,
@@ -17,19 +18,16 @@ Dio buildDio({String? Function()? tokenProvider}) {
   dio.interceptors.add(
     InterceptorsWrapper(
       onRequest: (options, handler) {
-        final token = tokenProvider?.call();
+        final token = authNotifier.accessToken;
         if (token != null) {
           options.headers['Authorization'] = 'Bearer $token';
         }
         if (kDebugMode) {
-          debugPrint(' [API REQ] ${options.method} -> ${options.uri}');
+          debugPrint('🌐 [API REQ] ${options.method} -> ${options.uri}');
         }
         return handler.next(options);
       },
       onResponse: (response, handler) {
-        if (kDebugMode) {
-          debugPrint(' [API RES] ${response.statusCode} <- ${response.requestOptions.uri}');
-        }
         final status = response.statusCode ?? 0;
         if (status >= 400) {
           return handler.reject(
@@ -45,21 +43,21 @@ Dio buildDio({String? Function()? tokenProvider}) {
         return handler.next(response);
       },
       onError: (error, handler) async {
-        if (kDebugMode) {
-          debugPrint(' [API ERR] ${error.requestOptions.uri}: ${error.type}');
-        }
+        final status = error.response?.statusCode;
+        final path = error.requestOptions.path;
 
-        final req = error.requestOptions;
-        final retries = req.extra['retries'] as int? ?? 0;
-        if (req.method == 'GET' && retries < 3 && error.type == DioExceptionType.connectionError) {
-          req.extra['retries'] = retries + 1;
-          await Future.delayed(Duration(milliseconds: 500 * (retries + 1)));
-          try {
-            final res = await dio.fetch(req);
-            return handler.resolve(res);
-          } catch (_) {}
-        }
 
+        if (status == 401 && !path.contains('/auth/')) {
+          final success = await authNotifier.refreshTokens();
+          if (success) {
+            final opts = error.requestOptions;
+            opts.headers['Authorization'] = 'Bearer ${authNotifier.accessToken}';
+            try {
+              final cloneReq = await dio.fetch(opts);
+              return handler.resolve(cloneReq);
+            } catch (_) {}
+          }
+        }
         return handler.next(error);
       },
     ),

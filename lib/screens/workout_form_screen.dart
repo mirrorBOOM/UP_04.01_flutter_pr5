@@ -19,8 +19,8 @@ class WorkoutFormScreen extends StatefulWidget {
 class _WorkoutFormScreenState extends State<WorkoutFormScreen> {
   final _formKey = GlobalKey<FormState>();
   bool _isDirty = false;
-  bool _saving = false; 
-  Map<String, String> _serverErrors = {}; 
+  bool _saving = false;
+  Map<String, String> _serverErrors = {};
 
   late final TextEditingController _titleController;
   late final TextEditingController _codeController;
@@ -64,6 +64,7 @@ class _WorkoutFormScreenState extends State<WorkoutFormScreen> {
   Future<void> _loadData() async {
     final repo = context.read<WorkoutRepository>();
     final item = await repo.findById(widget.id!);
+    if (!mounted) return;
     if (item != null) {
       setState(() {
         _titleController.text = item.title;
@@ -96,28 +97,35 @@ class _WorkoutFormScreenState extends State<WorkoutFormScreen> {
       capacityAvailable: 15,
     );
 
+    final repo = context.read<WorkoutRepository>();
+    final notifier = context.read<WorkoutListNotifier>();
+
     try {
-      final repo = context.read<WorkoutRepository>();
       await repo.save(workout);
+      await notifier.load();
       if (!mounted) return;
-      await context.read<WorkoutListNotifier>().load();
       _isDirty = false;
       context.go('/');
     } on ValidationException catch (e) {
+      if (!mounted) return;
       setState(() => _serverErrors = e.errors);
       _formKey.currentState!.validate();
     } on ConflictException catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Конфликт данных (409): ${e.message}'), backgroundColor: Colors.orange),
-        );
-      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Конфликт данных (409): ${e.message}'),
+          backgroundColor: Colors.orange,
+        ),
+      );
     } on ApiException catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(e.message), backgroundColor: Colors.red),
-        );
-      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.message),
+          backgroundColor: Colors.red,
+        ),
+      );
     } finally {
       if (mounted) setState(() => _saving = false);
     }
